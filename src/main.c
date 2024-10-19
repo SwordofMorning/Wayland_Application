@@ -14,6 +14,7 @@
 #define RECT_WIDTH 100
 #define RECT_HEIGHT 100
 #define FPS 60
+#define NUM_RECTS 8
 
 struct wl_display *display = NULL;
 struct wl_registry *registry = NULL;
@@ -23,8 +24,13 @@ struct wl_shell *shell = NULL;
 struct wl_shell_surface *shell_surface = NULL;
 struct wl_shm *shm = NULL;
 
-int rect_x = 0, rect_y = 0;
-int velo_x = 10, velo_y = 10;
+struct Rectangle {
+    int x, y;
+    int velo_x, velo_y;
+    uint32_t color;
+};
+
+struct Rectangle rects[NUM_RECTS];
 
 void *shm_data = NULL;
 struct wl_buffer *buffer = NULL;
@@ -77,36 +83,63 @@ static struct wl_buffer* create_buffer() {
     return buffer;
 }
 
-void draw_rect() {
+void draw_rects() {
     uint32_t *pixels = (uint32_t *)shm_data;
     
     // Clear the entire buffer with transparent color
     memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 4);
     
-    // Draw the white rectangle at new position
-    for (int y = rect_y; y < rect_y + RECT_HEIGHT; y++) {
-        for (int x = rect_x; x < rect_x + RECT_WIDTH; x++) {
-            if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
-                pixels[y * WINDOW_WIDTH + x] = 0xFFFFFFFF;  // White color
+    // Draw all rectangles
+    for (int i = 0; i < NUM_RECTS; i++) {
+        for (int y = rects[i].y; y < rects[i].y + RECT_HEIGHT; y++) {
+            for (int x = rects[i].x; x < rects[i].x + RECT_WIDTH; x++) {
+                if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
+                    pixels[y * WINDOW_WIDTH + x] = rects[i].color;
+                }
             }
         }
     }
 }
 
-void update_rect_position() {
-    rect_x += velo_x;
-    rect_y += velo_y;
+void update_rect_positions() {
+    for (int i = 0; i < NUM_RECTS; i++) {
+        rects[i].x += rects[i].velo_x;
+        rects[i].y += rects[i].velo_y;
 
-    // Collision detection
-    if (rect_x <= 0 || rect_x + RECT_WIDTH >= WINDOW_WIDTH) {
-        velo_x = -velo_x;
+        // Collision detection
+        if (rects[i].x <= 0 || rects[i].x + RECT_WIDTH >= WINDOW_WIDTH) {
+            rects[i].velo_x = -rects[i].velo_x;
+        }
+        if (rects[i].y <= 0 || rects[i].y + RECT_HEIGHT >= WINDOW_HEIGHT) {
+            rects[i].velo_y = -rects[i].velo_y;
+        }
     }
-    if (rect_y <= 0 || rect_y + RECT_HEIGHT >= WINDOW_HEIGHT) {
-        velo_y = -velo_y;
+}
+
+void initialize_rects() {
+    uint32_t colors[NUM_RECTS] = {
+        0xFFFF0000,  // Red
+        0xFF00FF00,  // Green
+        0xFF0000FF,  // Blue
+        0xFFFFFF00,  // Yellow
+        0xFFFF00FF,  // Purple
+        0xFF00FFFF,  // Cyan
+        0xFF000000,  // Black
+        0xFFFFFFFF   // White
+    };
+
+    for (int i = 0; i < NUM_RECTS; i++) {
+        rects[i].x = rand() % (WINDOW_WIDTH - RECT_WIDTH);
+        rects[i].y = rand() % (WINDOW_HEIGHT - RECT_HEIGHT);
+        rects[i].velo_x = (rand() % 10) + 5;
+        rects[i].velo_y = (rand() % 10) + 5;
+        rects[i].color = colors[i];
     }
 }
 
 int main(int argc, char **argv) {
+    srand(time(NULL));  // Initialize random seed
+
     display = wl_display_connect(NULL);
     if (display == NULL) {
         fprintf(stderr, "Can't connect to display\n");
@@ -141,14 +174,16 @@ int main(int argc, char **argv) {
 
     buffer = create_buffer();
 
+    initialize_rects();
+
     struct timespec start, end;
     long frame_duration = 1000000000 / FPS; // nanoseconds
 
     while (1) {
         clock_gettime(CLOCK_MONOTONIC, &start);
 
-        update_rect_position();
-        draw_rect();
+        update_rect_positions();
+        draw_rects();
 
         wl_surface_attach(surface, buffer, 0, 0);
         wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
