@@ -13,8 +13,8 @@ SET(CMAKE_CXX_COMPILER ${COMPILER_PATH}arm-linux-gnueabihf-g++)
 
 # ===== Setp 2 : Set Flags =====
 
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -s -O3 -lrt -pthread")
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s -O3 -lrt -pthread")
+SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -s -O3 -lrt -pthread -fopenmp")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s -O3 -lrt -pthread -fopenmp")
 
 # ===== Setp 3 : Set Application Name =====
 

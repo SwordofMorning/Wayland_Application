@@ -13,8 +13,8 @@
 
 #define WINDOW_WIDTH 1920
 #define WINDOW_HEIGHT 1080
-#define RECT_WIDTH 100
-#define RECT_HEIGHT 100
+#define RECT_WIDTH 800
+#define RECT_HEIGHT 800
 #define NUM_RECTS 8
 #define FPS 60
 
@@ -42,6 +42,8 @@ uint64_t frame_count = 0;
 double current_fps = 0.0;
 
 bool is_vsync = true;
+int vsync_interval = 2;  // 每隔多少帧进行一次垂直同步
+int frame_counter = 0;   // 用于跟踪帧数的计数器
 
 static void registry_handler(void *data, struct wl_registry *registry, uint32_t id,
                              const char *interface, uint32_t version) {
@@ -98,6 +100,7 @@ void draw_rects() {
     memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 4);
     
     // Draw all rectangles
+    #pragma omp parallel for
     for (int i = 0; i < NUM_RECTS; i++) {
         for (int y = rects[i].y; y < rects[i].y + RECT_HEIGHT; y++) {
             for (int x = rects[i].x; x < rects[i].x + RECT_WIDTH; x++) {
@@ -179,9 +182,11 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
     wl_surface_attach(surface, buffer, 0, 0);
     wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     
-    if (is_vsync) {
+    frame_counter++;
+    if (is_vsync && (frame_counter % vsync_interval == 0)) {
         struct wl_callback *callback = wl_surface_frame(surface);
         wl_callback_add_listener(callback, &frame_listener, NULL);
+        frame_counter = 0;  // 重置计数器
     }
     
     wl_surface_commit(surface);
@@ -247,7 +252,7 @@ int main(int argc, char **argv) {
         }
         wl_display_flush(display);
 
-        int timeout = is_vsync ? -1 : (1000 / FPS);
+        int timeout = is_vsync ? (frame_counter % vsync_interval == 0 ? -1 : 0) : (1000 / FPS);
         if (poll(&pfd, 1, timeout) > 0) {
             wl_display_read_events(display);
             wl_display_dispatch_pending(display);
@@ -255,7 +260,7 @@ int main(int argc, char **argv) {
             wl_display_cancel_read(display);
         }
 
-        if (!is_vsync) {
+        if (!is_vsync || (is_vsync && frame_counter % vsync_interval != 0)) {
             frame_callback(NULL, NULL, 0);
         }
     }
