@@ -13,7 +13,6 @@
 #define WINDOW_HEIGHT 1080
 #define RECT_WIDTH 100
 #define RECT_HEIGHT 100
-#define FPS 60
 #define NUM_RECTS 8
 
 struct wl_display *display = NULL;
@@ -137,6 +136,27 @@ void initialize_rects() {
     }
 }
 
+static void frame_callback(void *data, struct wl_callback *callback, uint32_t time);
+
+static const struct wl_callback_listener frame_listener = {
+    .done = frame_callback
+};
+
+static void frame_callback(void *data, struct wl_callback *callback, uint32_t time) {
+    wl_callback_destroy(callback);
+    
+    update_rect_positions();
+    draw_rects();
+
+    wl_surface_attach(surface, buffer, 0, 0);
+    wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+    
+    callback = wl_surface_frame(surface);
+    wl_callback_add_listener(callback, &frame_listener, NULL);
+    
+    wl_surface_commit(surface);
+}
+
 int main(int argc, char **argv) {
     srand(time(NULL));  // Initialize random seed
 
@@ -176,30 +196,14 @@ int main(int argc, char **argv) {
 
     initialize_rects();
 
-    struct timespec start, end;
-    long frame_duration = 1000000000 / FPS; // nanoseconds
+    struct wl_callback *callback = wl_surface_frame(surface);
+    wl_callback_add_listener(callback, &frame_listener, NULL);
 
-    while (1) {
-        clock_gettime(CLOCK_MONOTONIC, &start);
+    wl_surface_attach(surface, buffer, 0, 0);
+    wl_surface_commit(surface);
 
-        update_rect_positions();
-        draw_rects();
-
-        wl_surface_attach(surface, buffer, 0, 0);
-        wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-        wl_surface_commit(surface);
-
-        wl_display_dispatch_pending(display);
-        wl_display_flush(display);
-
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        long elapsed = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
-        if (elapsed < frame_duration) {
-            struct timespec remaining;
-            remaining.tv_sec = 0;
-            remaining.tv_nsec = frame_duration - elapsed;
-            nanosleep(&remaining, NULL);
-        }
+    while (wl_display_dispatch(display) != -1) {
+        // Event loop
     }
 
     wl_buffer_destroy(buffer);
