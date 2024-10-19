@@ -118,14 +118,14 @@ void update_rect_positions() {
 
 void initialize_rects() {
     uint32_t colors[NUM_RECTS] = {
-        0xFFFF0000,  // Red
-        0xFF00FF00,  // Green
-        0xFF0000FF,  // Blue
-        0xFFFFFF00,  // Yellow
-        0xFFFF00FF,  // Purple
-        0xFF00FFFF,  // Cyan
-        0xFF000000,  // Black
-        0xFFFFFFFF   // White
+        0x80FF0000,  // Red
+        0x8000FF00,  // Green
+        0x800000FF,  // Blue
+        0x80FFFF00,  // Yellow
+        0x80FF00FF,  // Purple
+        0x8000FFFF,  // Cyan
+        0x80000000,  // Black
+        0x80FFFFFF   // White
     };
 
     for (int i = 0; i < NUM_RECTS; i++) {
