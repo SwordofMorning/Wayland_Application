@@ -80,14 +80,8 @@ static struct wl_buffer* create_buffer(int index) {
 void draw_rect(int index) {
     uint32_t *pixels = (uint32_t *)shm_data[index];
     
-    // Clear only the previous and current rectangle areas
-    for (int y = rect_y - velo_y; y < rect_y - velo_y + RECT_HEIGHT; y++) {
-        for (int x = rect_x - velo_x; x < rect_x - velo_x + RECT_WIDTH; x++) {
-            if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
-                pixels[y * WINDOW_WIDTH + x] = 0x00000000;  // Black color (transparent)
-            }
-        }
-    }
+    // Clear the entire buffer with transparent color
+    memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 4);
     
     // Draw the white rectangle at new position
     for (int y = rect_y; y < rect_y + RECT_HEIGHT; y++) {
@@ -125,9 +119,7 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
     draw_rect(current_buffer);
 
     wl_surface_attach(surface, buffer[current_buffer], 0, 0);
-    wl_surface_damage(surface, 
-                      rect_x - abs(velo_x), rect_y - abs(velo_y), 
-                      RECT_WIDTH + 2*abs(velo_x), RECT_HEIGHT + 2*abs(velo_y));
+    wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     
     callback = wl_surface_frame(surface);
     wl_callback_add_listener(callback, &frame_listener, NULL);
@@ -168,7 +160,9 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    wl_shell_surface_set_toplevel(shell_surface);
+    // Set the surface as transient and fullscreen
+    wl_shell_surface_set_transient(shell_surface, NULL, 0, 0, WL_SHELL_SURFACE_TRANSIENT_INACTIVE);
+    wl_shell_surface_set_fullscreen(shell_surface, WL_SHELL_SURFACE_FULLSCREEN_METHOD_SCALE, 0, NULL);
 
     buffer[0] = create_buffer(0);
     buffer[1] = create_buffer(1);
