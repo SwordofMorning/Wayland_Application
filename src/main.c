@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,6 +6,13 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <wayland-client.h>
+#include <time.h>
+
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
+#define RECT_WIDTH 100
+#define RECT_HEIGHT 100
+#define FPS 20
 
 struct wl_display *display = NULL;
 struct wl_registry *registry = NULL;
@@ -13,6 +21,11 @@ struct wl_surface *surface = NULL;
 struct wl_shell *shell = NULL;
 struct wl_shell_surface *shell_surface = NULL;
 struct wl_shm *shm = NULL;
+
+int rect_x = 0, rect_y = 0;
+int velo_x = 10, velo_y = 10;
+
+void *shm_data = NULL;
 
 static void registry_handler(void *data, struct wl_registry *registry, uint32_t id,
                              const char *interface, uint32_t version) {
@@ -31,38 +44,64 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static struct wl_buffer* create_buffer() {
-    int width = 100, height = 100;
-    int stride = width * 4;
-    int size = stride * height;
+    int stride = WINDOW_WIDTH * 4;
+    int size = stride * WINDOW_HEIGHT;
 
     int fd = memfd_create("buffer", 0);
     if (fd < 0) {
-        fprintf(stderr, "Failed to create memfd\n");
+        perror("Failed to create memfd");
         exit(1);
     }
 
     if (ftruncate(fd, size) < 0) {
-        fprintf(stderr, "Failed to set size of memfd\n");
+        perror("Failed to set size of memfd");
         close(fd);
         exit(1);
     }
 
-    void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (data == MAP_FAILED) {
-        fprintf(stderr, "mmap failed\n");
+    shm_data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shm_data == MAP_FAILED) {
+        perror("mmap failed");
         close(fd);
         exit(1);
     }
-
-    memset(data, 255, size);  // 设置所有像素为白色
 
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
-    struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+    struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, WINDOW_WIDTH, WINDOW_HEIGHT, stride, WL_SHM_FORMAT_ARGB8888);
 
     wl_shm_pool_destroy(pool);
     close(fd);
 
     return buffer;
+}
+
+void draw_rect() {
+    uint32_t *pixels = (uint32_t *)shm_data;
+    
+    // Clear the entire window
+    memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+    
+    // Draw the white rectangle
+    for (int y = rect_y; y < rect_y + RECT_HEIGHT; y++) {
+        for (int x = rect_x; x < rect_x + RECT_WIDTH; x++) {
+            if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
+                pixels[y * WINDOW_WIDTH + x] = 0xFFFFFFFF;  // White color
+            }
+        }
+    }
+}
+
+void update_rect_position() {
+    rect_x += velo_x;
+    rect_y += velo_y;
+
+    // Collision detection
+    if (rect_x <= 0 || rect_x + RECT_WIDTH >= WINDOW_WIDTH) {
+        velo_x = -velo_x;
+    }
+    if (rect_y <= 0 || rect_y + RECT_HEIGHT >= WINDOW_HEIGHT) {
+        velo_y = -velo_y;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -100,11 +139,32 @@ int main(int argc, char **argv) {
 
     struct wl_buffer *buffer = create_buffer();
 
-    wl_surface_attach(surface, buffer, 0, 0);
-    wl_surface_commit(surface);
+    struct timespec start, end;
+    long frame_duration = 1000000000 / FPS; // Frame duration in nanoseconds
 
-    while (wl_display_dispatch(display) != -1) {
-        // 主循环
+    while (1) {
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        update_rect_position();
+        draw_rect();
+
+        wl_surface_attach(surface, buffer, 0, 0);
+        wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+        wl_surface_commit(surface);
+
+        wl_display_dispatch_pending(display);
+
+        clock_gettime(CLOCK_MONOTONIC, &end);
+
+        long elapsed = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+        if (elapsed < frame_duration) {
+            struct timespec remaining;
+            remaining.tv_sec = 0;
+            remaining.tv_nsec = frame_duration - elapsed;
+            nanosleep(&remaining, NULL);
+        }
+
+        printf("update\n");
     }
 
     wl_buffer_destroy(buffer);
