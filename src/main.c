@@ -7,12 +7,12 @@
 #include <sys/mman.h>
 #include <wayland-client.h>
 #include <time.h>
+#include <errno.h>
 
 #define WINDOW_WIDTH 1920
 #define WINDOW_HEIGHT 1080
 #define RECT_WIDTH 100
 #define RECT_HEIGHT 100
-#define FPS 20
 
 struct wl_display *display = NULL;
 struct wl_registry *registry = NULL;
@@ -25,7 +25,9 @@ struct wl_shm *shm = NULL;
 int rect_x = 0, rect_y = 0;
 int velo_x = 10, velo_y = 10;
 
-void *shm_data = NULL;
+void *shm_data[2] = {NULL, NULL};
+struct wl_buffer *buffer[2] = {NULL, NULL};
+int current_buffer = 0;
 
 static void registry_handler(void *data, struct wl_registry *registry, uint32_t id,
                              const char *interface, uint32_t version) {
@@ -43,7 +45,7 @@ static const struct wl_registry_listener registry_listener = {
     NULL
 };
 
-static struct wl_buffer* create_buffer() {
+static struct wl_buffer* create_buffer(int index) {
     int stride = WINDOW_WIDTH * 4;
     int size = stride * WINDOW_HEIGHT;
 
@@ -59,8 +61,8 @@ static struct wl_buffer* create_buffer() {
         exit(1);
     }
 
-    shm_data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (shm_data == MAP_FAILED) {
+    shm_data[index] = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shm_data[index] == MAP_FAILED) {
         perror("mmap failed");
         close(fd);
         exit(1);
@@ -75,13 +77,19 @@ static struct wl_buffer* create_buffer() {
     return buffer;
 }
 
-void draw_rect() {
-    uint32_t *pixels = (uint32_t *)shm_data;
+void draw_rect(int index) {
+    uint32_t *pixels = (uint32_t *)shm_data[index];
     
-    // Clear the entire window
-    memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+    // Clear only the previous and current rectangle areas
+    for (int y = rect_y - velo_y; y < rect_y - velo_y + RECT_HEIGHT; y++) {
+        for (int x = rect_x - velo_x; x < rect_x - velo_x + RECT_WIDTH; x++) {
+            if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
+                pixels[y * WINDOW_WIDTH + x] = 0x00000000;  // Black color (transparent)
+            }
+        }
+    }
     
-    // Draw the white rectangle
+    // Draw the white rectangle at new position
     for (int y = rect_y; y < rect_y + RECT_HEIGHT; y++) {
         for (int x = rect_x; x < rect_x + RECT_WIDTH; x++) {
             if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
@@ -102,6 +110,31 @@ void update_rect_position() {
     if (rect_y <= 0 || rect_y + RECT_HEIGHT >= WINDOW_HEIGHT) {
         velo_y = -velo_y;
     }
+}
+
+static void frame_callback(void *data, struct wl_callback *callback, uint32_t time);
+
+static const struct wl_callback_listener frame_listener = {
+    .done = frame_callback
+};
+
+static void frame_callback(void *data, struct wl_callback *callback, uint32_t time) {
+    wl_callback_destroy(callback);
+
+    update_rect_position();
+    draw_rect(current_buffer);
+
+    wl_surface_attach(surface, buffer[current_buffer], 0, 0);
+    wl_surface_damage(surface, 
+                      rect_x - abs(velo_x), rect_y - abs(velo_y), 
+                      RECT_WIDTH + 2*abs(velo_x), RECT_HEIGHT + 2*abs(velo_y));
+    
+    callback = wl_surface_frame(surface);
+    wl_callback_add_listener(callback, &frame_listener, NULL);
+    
+    wl_surface_commit(surface);
+
+    current_buffer = 1 - current_buffer;
 }
 
 int main(int argc, char **argv) {
@@ -137,37 +170,21 @@ int main(int argc, char **argv) {
 
     wl_shell_surface_set_toplevel(shell_surface);
 
-    struct wl_buffer *buffer = create_buffer();
+    buffer[0] = create_buffer(0);
+    buffer[1] = create_buffer(1);
 
-    struct timespec start, end;
-    long frame_duration = 1000000000 / FPS; // Frame duration in nanoseconds
+    struct wl_callback *callback = wl_surface_frame(surface);
+    wl_callback_add_listener(callback, &frame_listener, NULL);
 
-    while (1) {
-        clock_gettime(CLOCK_MONOTONIC, &start);
+    wl_surface_attach(surface, buffer[0], 0, 0);
+    wl_surface_commit(surface);
 
-        update_rect_position();
-        draw_rect();
-
-        wl_surface_attach(surface, buffer, 0, 0);
-        wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-        wl_surface_commit(surface);
-
-        wl_display_dispatch_pending(display);
-
-        clock_gettime(CLOCK_MONOTONIC, &end);
-
-        long elapsed = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
-        if (elapsed < frame_duration) {
-            struct timespec remaining;
-            remaining.tv_sec = 0;
-            remaining.tv_nsec = frame_duration - elapsed;
-            nanosleep(&remaining, NULL);
-        }
-
-        printf("update\n");
+    while (wl_display_dispatch(display) != -1) {
+        // Event loop
     }
 
-    wl_buffer_destroy(buffer);
+    wl_buffer_destroy(buffer[0]);
+    wl_buffer_destroy(buffer[1]);
     wl_shell_surface_destroy(shell_surface);
     wl_surface_destroy(surface);
     wl_shell_destroy(shell);
