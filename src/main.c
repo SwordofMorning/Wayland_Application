@@ -8,12 +8,15 @@
 #include <wayland-client.h>
 #include <time.h>
 #include <errno.h>
+#include <stdbool.h>
+#include <poll.h>
 
 #define WINDOW_WIDTH 1920
 #define WINDOW_HEIGHT 1080
 #define RECT_WIDTH 100
 #define RECT_HEIGHT 100
 #define NUM_RECTS 8
+#define FPS 60
 
 struct wl_display *display = NULL;
 struct wl_registry *registry = NULL;
@@ -33,6 +36,12 @@ struct Rectangle rects[NUM_RECTS];
 
 void *shm_data = NULL;
 struct wl_buffer *buffer = NULL;
+
+uint64_t last_time = 0;
+uint64_t frame_count = 0;
+double current_fps = 0.0;
+
+bool is_vsync = true;
 
 static void registry_handler(void *data, struct wl_registry *registry, uint32_t id,
                              const char *interface, uint32_t version) {
@@ -98,6 +107,8 @@ void draw_rects() {
             }
         }
     }
+
+    printf("FPS: %.2f\n", current_fps);
 }
 
 void update_rect_positions() {
@@ -136,6 +147,12 @@ void initialize_rects() {
     }
 }
 
+static uint64_t get_time_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
 static void frame_callback(void *data, struct wl_callback *callback, uint32_t time);
 
 static const struct wl_callback_listener frame_listener = {
@@ -143,16 +160,29 @@ static const struct wl_callback_listener frame_listener = {
 };
 
 static void frame_callback(void *data, struct wl_callback *callback, uint32_t time) {
-    wl_callback_destroy(callback);
+    if (callback) {
+        wl_callback_destroy(callback);
+    }
     
+    uint64_t current_time = get_time_ns();
+    frame_count++;
+
+    if (current_time - last_time >= 1000000000) {  // 1 second in nanoseconds
+        current_fps = (double)frame_count;
+        frame_count = 0;
+        last_time = current_time;
+    }
+
     update_rect_positions();
     draw_rects();
 
     wl_surface_attach(surface, buffer, 0, 0);
     wl_surface_damage(surface, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     
-    callback = wl_surface_frame(surface);
-    wl_callback_add_listener(callback, &frame_listener, NULL);
+    if (is_vsync) {
+        struct wl_callback *callback = wl_surface_frame(surface);
+        wl_callback_add_listener(callback, &frame_listener, NULL);
+    }
     
     wl_surface_commit(surface);
 }
@@ -196,14 +226,38 @@ int main(int argc, char **argv) {
 
     initialize_rects();
 
-    struct wl_callback *callback = wl_surface_frame(surface);
-    wl_callback_add_listener(callback, &frame_listener, NULL);
+    last_time = get_time_ns();  // Initialize last_time
+
+    if (is_vsync) {
+        struct wl_callback *callback = wl_surface_frame(surface);
+        wl_callback_add_listener(callback, &frame_listener, NULL);
+    }
 
     wl_surface_attach(surface, buffer, 0, 0);
     wl_surface_commit(surface);
 
-    while (wl_display_dispatch(display) != -1) {
-        // Event loop
+    struct pollfd pfd = {
+        .fd = wl_display_get_fd(display),
+        .events = POLLIN,
+    };
+
+    while (1) {
+        while (wl_display_prepare_read(display) != 0) {
+            wl_display_dispatch_pending(display);
+        }
+        wl_display_flush(display);
+
+        int timeout = is_vsync ? -1 : (1000 / FPS);
+        if (poll(&pfd, 1, timeout) > 0) {
+            wl_display_read_events(display);
+            wl_display_dispatch_pending(display);
+        } else {
+            wl_display_cancel_read(display);
+        }
+
+        if (!is_vsync) {
+            frame_callback(NULL, NULL, 0);
+        }
     }
 
     wl_buffer_destroy(buffer);
