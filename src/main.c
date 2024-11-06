@@ -9,11 +9,10 @@
 #include <time.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
-// #include <drm_fourcc.h>
 #include "/home/xjt/_Workspace_/VOC/System/RV1126_RV1109_LINUX_SDK_V2.2.5.1_20230530/buildroot/output/rockchip_rv1126_rv1109/host/arm-buildroot-linux-gnueabihf/sysroot/usr/include/drm/drm_fourcc.h"
 
-#define RECT_WIDTH 100
-#define RECT_HEIGHT 100
+#define RECT_WIDTH 800
+#define RECT_HEIGHT 800
 #define NUM_RECTS 8
 #define FPS 60
 
@@ -34,20 +33,20 @@ struct drm_mode_create_dumb create_dumb = {0};
 struct drm_mode_map_dumb map_dumb = {0};
 uint32_t fb_id;
 uint8_t *map;
-int width, height;        // Actual display dimensions
-int buffer_width, buffer_height;  // Buffer dimensions (aligned)
-int stride;               // Bytes per row in the buffer
+int width, height;
+int buffer_width, buffer_height;
+int stride;
 
 void initialize_rects() {
     uint32_t colors[NUM_RECTS] = {
-        0xFFFF0000,  // Red
-        0xFF00FF00,  // Green
-        0xFF0000FF,  // Blue
-        0xFFFFFF00,  // Yellow
-        0xFFFF00FF,  // Purple
-        0xFF00FFFF,  // Cyan
-        0xFF000000,  // Black
-        0xFFFFFFFF   // White
+        0x80FF0000,  // Semi-transparent Red
+        0x8000FF00,  // Semi-transparent Green
+        0x800000FF,  // Semi-transparent Blue
+        0x80FFFF00,  // Semi-transparent Yellow
+        0x80FF00FF,  // Semi-transparent Purple
+        0x8000FFFF,  // Semi-transparent Cyan
+        0x80000000,  // Semi-transparent Black
+        0x80FFFFFF   // Semi-transparent White
     };
 
     for (int i = 0; i < NUM_RECTS; i++) {
@@ -76,10 +75,10 @@ void update_rect_positions() {
 void draw_rects() {
     uint32_t *pixels = (uint32_t *)map;
     
-    // Clear the entire buffer
+    // Clear the entire buffer with transparent color (alpha = 0)
     for (int y = 0; y < buffer_height; y++) {
         for (int x = 0; x < buffer_width; x++) {
-            pixels[y * (stride / 4) + x] = 0;
+            pixels[y * (stride / 4) + x] = 0x00000000;  // Fully transparent
         }
     }
     
@@ -126,7 +125,7 @@ int main() {
     mode = connector->modes[0];
     width = mode.hdisplay;
     height = mode.vdisplay;
-    buffer_width = (width + 15) & ~15;  // Align to 16 pixels
+    buffer_width = (width + 15) & ~15;
     buffer_height = height;
 
     for (int i = 0; i < resources->count_encoders; i++) {
@@ -151,19 +150,39 @@ int main() {
 
     stride = create_dumb.pitch;
 
-    drmModeAddFB(fd, buffer_width, buffer_height, 24, 32, stride, create_dumb.handle, &fb_id);
+    // 使用ARGB8888格式创建帧缓冲区
+    uint32_t handles[4] = {create_dumb.handle};
+    uint32_t pitches[4] = {stride};
+    uint32_t offsets[4] = {0};
+    drmModeAddFB2(fd, buffer_width, buffer_height,
+                  DRM_FORMAT_ARGB8888, handles, pitches, offsets,
+                  &fb_id, 0);
 
     map_dumb.handle = create_dumb.handle;
     drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_dumb);
 
     map = mmap(0, create_dumb.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map_dumb.offset);
 
+    // 设置plane属性以启用alpha混合
+    drmModeObjectProperties *props = drmModeObjectGetProperties(fd, crtc_id, DRM_MODE_OBJECT_CRTC);
+    if (props) {
+        for (uint32_t i = 0; i < props->count_props; i++) {
+            drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[i]);
+            if (prop && strcmp(prop->name, "alpha") == 0) {
+                drmModeObjectSetProperty(fd, crtc_id, DRM_MODE_OBJECT_CRTC,
+                                       prop->prop_id, 0xFF);  // 设置alpha为最大值
+                drmModeFreeProperty(prop);
+            }
+        }
+        drmModeFreeObjectProperties(props);
+    }
+
     drmModeSetCrtc(fd, crtc_id, fb_id, 0, 0, &connector->connector_id, 1, &mode);
 
     initialize_rects();
 
     struct timespec start, end;
-    long frame_duration = 1000000000 / FPS; // nanoseconds
+    long frame_duration = 1000000000 / FPS;
 
     while (1) {
         clock_gettime(CLOCK_MONOTONIC, &start);
@@ -182,7 +201,6 @@ int main() {
             nanosleep(&remaining, NULL);
         }
     }
-
     // Clean up (this part is never reached in this example)
     drmModeRmFB(fd, fb_id);
     munmap(map, create_dumb.size);
